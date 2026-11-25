@@ -34,6 +34,14 @@ fn age_secs(t: SystemTime) -> u64 {
 pub fn run() -> String {
     let mut o = String::new();
     o += &format!("== Codenotch doctor v{} ==\n", env!("CARGO_PKG_VERSION"));
+    #[cfg(target_os = "linux")]
+    {
+        o += &format!(
+            "linux: GDK_BACKEND={} | focus extension (codenotch-focus@codenotch) {}\n",
+            std::env::var("GDK_BACKEND").unwrap_or_else(|_| "(unset)".into()),
+            if crate::focus::linux_shell::available() { "answering" } else { "not answering: seen-clears-it and jump-back are off" }
+        );
+    }
 
     let cfg = crate::config::load();
     o += &format!(

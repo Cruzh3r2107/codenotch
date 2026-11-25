@@ -354,6 +354,19 @@ the X11 backend), so the autostart entry and a bare `./target/release/codenotch`
 on its edge too. Its windows are override-redirect, out of the window manager's hands, so neither
 Mutter's `center-new-windows` nor a tiling extension such as Pop Shell can move them.
 
+**Seen-clears-it and jumping back to the terminal** need the companion GNOME Shell extension in
+`linux/gnome-shell-extension/`: Wayland lets no app see which window is focused, or raise another
+app's window. It exports two calls on the session bus (`com.codenotch.Focus`), and without it both
+features stay off. The process tree comes from `/proc`.
+
+```sh
+gnome-extensions pack --force -o /tmp linux/gnome-shell-extension/codenotch-focus@codenotch
+gnome-extensions install --force /tmp/codenotch-focus@codenotch.shell-extension.zip
+# log out and back in (Wayland), then:
+gnome-extensions enable codenotch-focus@codenotch
+./scripts/run-linux.sh doctor   # "focus extension … answering"
+```
+
 Install the hooks from a stable place — `install-hooks` records the path of the `codenotch-hook`
 next to the running binary:
 
@@ -366,7 +379,7 @@ What still does not work, and degrades quietly rather than misbehaving:
 
 | Feature | Why |
 |---|---|
-| Seen-clears-it, and jumping back to the terminal | `focus.rs` reads the foreground window and the process tree through Toolhelp; under Wayland only the shell knows the focused window, so it needs a shell extension. |
+| Telling apart windows or tabs of one terminal process | Ptyxis and GNOME Terminal run every window from one process, so jump-back raises its most recently used window, and focusing any of them counts as seeing every session in them. |
 | Antigravity | Its credential is read from the Windows Credential Manager; libsecret is the equivalent. |
 | App icons taken from an installed `.exe` | The built-in provider SVGs cover every provider, so little is lost. |
 

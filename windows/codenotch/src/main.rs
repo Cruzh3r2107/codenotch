@@ -2107,8 +2107,10 @@ fn start_menu_updater(app: AppHandle) {
     });
 }
 
-/// Seen-clears-it: looking at a session acknowledges it (engine behaviour, unchanged)
-#[cfg(windows)]
+/// Seen-clears-it: looking at a session acknowledges it (engine behaviour, unchanged). On Linux the
+/// focused window comes from the companion GNOME Shell extension; without it `fg_pid` is 0 and
+/// nothing is acknowledged.
+#[cfg(any(windows, target_os = "linux"))]
 fn ack_scan(app: &AppHandle) -> bool {
     let need = {
         let st = app.state::<AppState>();
@@ -2135,7 +2137,7 @@ fn ack_scan(app: &AppHandle) -> bool {
         }
     })
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn ack_scan(_app: &AppHandle) -> bool {
     false
 }

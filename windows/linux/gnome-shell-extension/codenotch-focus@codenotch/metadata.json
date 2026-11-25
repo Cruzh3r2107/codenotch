@@ -1,0 +1,7 @@
+{
+  "uuid": "codenotch-focus@codenotch",
+  "name": "Codenotch Focus",
+  "description": "Lets Codenotch see which window is focused and bring a session's terminal forward, which Wayland does not allow an app to do on its own.",
+  "shell-version": ["48", "49", "50"],
+  "version": 1
+}

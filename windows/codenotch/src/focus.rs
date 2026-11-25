@@ -114,14 +114,26 @@ pub fn focus_terminal(claude_pid: u32) -> bool {
     true
 }
 
-#[cfg(not(windows))]
+/// Linux: the same walk up the process tree, through `/proc`, then the companion GNOME Shell extension
+/// raises the window (see `linux_shell`): under Wayland an app may not raise another app's window.
+#[cfg(target_os = "linux")]
+pub fn focus_terminal(claude_pid: u32) -> bool {
+    if claude_pid == 0 {
+        return false;
+    }
+    let maps = proc_maps();
+    let chain = chain_of(claude_pid, &maps.ppid);
+    linux_shell::activate(&chain, "")
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn focus_terminal(_claude_pid: u32) -> bool {
     false
 }
 
 // ---------------- Process and foreground helpers shared by seen-clears-it and the desktop jump-back ----------------
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub struct ProcMaps {
     pub ppid: std::collections::HashMap<u32, u32>,
     pub name: std::collections::HashMap<u32, String>, // lower-case exe name
@@ -177,7 +189,7 @@ pub fn fg_pid() -> u32 {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub fn chain_of(pid: u32, ppid: &std::collections::HashMap<u32, u32>) -> Vec<u32> {
     let mut chain = vec![pid];
     let mut cur = pid;
@@ -194,7 +206,7 @@ pub fn chain_of(pid: u32, ppid: &std::collections::HashMap<u32, u32>) -> Vec<u32
 }
 
 /// Whether the foreground process belongs to a session's terminal window (itself on the chain, or its parent — the conhost case)
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub fn pid_hits_chain(pid: u32, chain: &[u32], maps: &ProcMaps) -> bool {
     chain.contains(&pid)
         || maps
@@ -271,4 +283,116 @@ pub fn focus_claude_desktop() -> bool {
 #[cfg(not(windows))]
 pub fn focus_claude_desktop() -> bool {
     false
+}
+
+// ---------------- Linux ----------------
+
+/// Every process's parent and name, from `/proc/<pid>/stat`. The name is the kernel's `comm`
+/// (at most 15 characters), lower-cased as the Windows names are.
+#[cfg(target_os = "linux")]
+pub fn proc_maps() -> ProcMaps {
+    let mut m = ProcMaps { ppid: Default::default(), name: Default::default() };
+    let Ok(dir) = std::fs::read_dir("/proc") else { return m };
+    for entry in dir.flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        if let Some((name, ppid)) = stat_of(pid) {
+            m.ppid.insert(pid, ppid);
+            m.name.insert(pid, name.to_lowercase());
+        }
+    }
+    m
+}
+
+/// (`comm`, parent) for one process. `comm` sits in parentheses and may itself hold spaces or `)`,
+/// so the fields after it are found from the last `)`.
+#[cfg(target_os = "linux")]
+pub fn stat_of(pid: u32) -> Option<(String, u32)> {
+    parse_stat(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+}
+
+#[cfg(any(test, target_os = "linux"))]
+fn parse_stat(stat: &str) -> Option<(String, u32)> {
+    let open = stat.find('(')?;
+    let close = stat.rfind(')')?;
+    let name = stat.get(open + 1..close)?.to_string();
+    let mut rest = stat.get(close + 1..)?.split_whitespace();
+    let _state = rest.next()?;
+    let ppid = rest.next()?.parse().ok()?;
+    Some((name, ppid))
+}
+
+/// The process owning the focused window, as the companion extension reports it; 0 when it is not
+/// installed, so seen-clears-it simply never fires.
+#[cfg(target_os = "linux")]
+pub fn fg_pid() -> u32 {
+    linux_shell::focused_pid()
+}
+
+/// The companion GNOME Shell extension (`linux/gnome-shell-extension/codenotch-focus@codenotch`),
+/// over the session bus. Every call is short and fails quietly when the extension is absent.
+#[cfg(target_os = "linux")]
+pub mod linux_shell {
+    use gtk::gio;
+    use gtk::glib::{self, ToVariant};
+
+    const NAME: &str = "com.codenotch.Focus";
+    const PATH: &str = "/com/codenotch/Focus";
+    const TIMEOUT_MS: i32 = 500;
+
+    fn call(method: &str, args: Option<&glib::Variant>) -> Option<glib::Variant> {
+        let bus = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE).ok()?;
+        bus.call_sync(
+            Some(NAME),
+            PATH,
+            NAME,
+            method,
+            args,
+            None,
+            gio::DBusCallFlags::NO_AUTO_START,
+            TIMEOUT_MS,
+            gio::Cancellable::NONE,
+        )
+        .ok()
+    }
+
+    pub fn focused_pid() -> u32 {
+        call("FocusedPid", None).and_then(|v| v.get::<(u32,)>()).map(|(p,)| p).unwrap_or(0)
+    }
+
+    pub fn activate(chain: &[u32], hint: &str) -> bool {
+        let args = (chain.to_vec(), hint.to_string()).to_variant();
+        call("Activate", Some(&args)).and_then(|v| v.get::<(bool,)>()).map(|(b,)| b).unwrap_or(false)
+    }
+
+    /// For the doctor: whether the extension answers at all.
+    pub fn available() -> bool {
+        call("FocusedPid", None).is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_process_name_may_hold_spaces_and_parentheses() {
+        assert_eq!(parse_stat("81792 (claude) S 19878 81792 19878"), Some(("claude".into(), 19878)));
+        // `comm` is whatever the process set, so the fields after it are found from the last `)`
+        assert_eq!(parse_stat("42 (Web Content (x)) R 7 42 7"), Some(("Web Content (x)".into(), 7)));
+        assert_eq!(parse_stat("garbage"), None);
+        assert_eq!(parse_stat("1 (init) S"), None);
+    }
+
+    #[cfg(any(windows, target_os = "linux"))]
+    #[test]
+    fn a_session_is_seen_from_its_terminal_window() {
+        // claude 100 → bash 90 → ptyxis-agent 80 → ptyxis 70 (the window) → systemd 1
+        let ppid: std::collections::HashMap<u32, u32> = [(100, 90), (90, 80), (80, 70), (70, 1), (55, 70)].into();
+        let maps = ProcMaps { ppid: ppid.clone(), name: Default::default() };
+        let chain = chain_of(100, &ppid);
+        assert_eq!(chain, [100, 90, 80, 70, 1]);
+        assert!(pid_hits_chain(70, &chain, &maps), "the terminal's own window");
+        assert!(pid_hits_chain(55, &chain, &maps), "a window whose parent is on the chain");
+        assert!(!pid_hits_chain(999, &chain, &maps), "an unrelated window");
+    }
 }
