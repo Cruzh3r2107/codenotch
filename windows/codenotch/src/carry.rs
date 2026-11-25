@@ -265,6 +265,13 @@ fn wait_for(flag: &AtomicU32, seq: u32, ms: u64) -> bool {
     false
 }
 
+/// How often the pointer is read while carrying. Windows reads it straight from the input state; on
+/// Linux each read is a trip to the GTK thread and back, so less waiting in between keeps up with it.
+#[cfg(target_os = "linux")]
+const POLL_MS: u64 = 4;
+#[cfg(not(target_os = "linux"))]
+const POLL_MS: u64 = 8;
+
 /// Alt+drag on the pill. The page empties once the overlay has the notch drawn; from then on the
 /// pointer is followed here and its place on the border sent to the overlay, until the button comes up.
 #[tauri::command]
@@ -280,12 +287,22 @@ pub fn begin_carry(app: AppHandle, shape: serde_json::Value) {
 }
 
 fn run(app: &AppHandle, shape: serde_json::Value) {
+    crate::applog("carry: begin");
     let (Some(start), Some(notch)) = (crate::target_screen(app), app.get_webview_window("notch")) else {
+        crate::applog("carry: no screen or no notch window; not carried");
         return;
     };
-    let (Ok(pos), Ok(win), Ok(cur)) = (notch.outer_position(), notch.outer_size(), app.cursor_position()) else {
-        return;
+    let (pos, win, cur) = match (notch.outer_position(), notch.outer_size(), app.cursor_position()) {
+        (Ok(p), Ok(w), Ok(c)) => (p, w, c),
+        (p, w, c) => {
+            crate::applog(&format!(
+                "carry: window or pointer unreadable (pos ok {}, size ok {}, pointer ok {}); not carried",
+                p.is_ok(), w.is_ok(), c.is_ok()
+            ));
+            return;
+        }
     };
+    crate::applog(&format!("carry: pointer at ({:.0},{:.0}), button down: {}", cur.x, cur.y, crate::left_button_down(app)));
     let from = Edge::parse(&{
         let st = app.state::<crate::AppState>();
         let c = st.cfg.lock().unwrap();
@@ -323,8 +340,19 @@ fn run(app: &AppHandle, shape: serde_json::Value) {
 
     let all = crate::screens(app);
     let mut last = middle;
-    while crate::left_button_down() {
-        if let Ok(cur) = app.cursor_position() {
+    let mut moves = 0u32;
+    let mut seen = (cur.x, cur.y);
+    loop {
+        let Some((x, y, down)) = crate::pointer_now(app) else { break };
+        if !down {
+            break;
+        }
+        {
+            let cur = tauri::PhysicalPosition::new(x, y);
+            if (cur.x, cur.y) != seen {
+                seen = (cur.x, cur.y);
+                moves += 1;
+            }
             if let Some(s) = crate::screen_at(&all, cur.x, cur.y)
                 .filter(|s| !crate::same_screen(s, &mon) && beyond(&mon, cur.x, cur.y) / s.scale >= CROSS)
             {
@@ -358,9 +386,10 @@ fn run(app: &AppHandle, shape: serde_json::Value) {
                 let _ = app.emit_to(LABEL, "carry_target", target);
             }
         }
-        std::thread::sleep(std::time::Duration::from_millis(8));
+        std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
     }
 
+    crate::applog(&format!("carry: button released after {moves} pointer moves, last place {last:.1}"));
     // Let go: the drawing comes to rest on its own and says where
     let _ = app.emit_to(LABEL, "carry_release", ());
     let mut rest = last;
@@ -440,12 +469,24 @@ fn show(app: &AppHandle, screen: &crate::Screen) {
         .focused(false)
         .focusable(false)
         .resizable(false)
+        .visible(false)
         .theme(crate::theme_choice(app))
         .initialization_script(crate::theme_script(crate::resolved_theme(app)));
     match builder.build() {
         Ok(w) => {
+            // Built hidden so it can be taken from the window manager before it is first mapped
+            #[cfg(target_os = "linux")]
+            if let Err(e) = crate::linux_pointer::unmanage(&w) {
+                crate::applog(&format!("carry overlay: unmanage: {e}"));
+            }
             pin(&w, screen);
+            // Under XWayland the overlay has to take the pointer itself. Once the notch empties for the
+            // carry the pointer is over no X window at all, XWayland hears nothing more from it, and
+            // the button reads as held for ever with the pointer frozen where the carry began. An
+            // overlay that takes input keeps the pointer, and the release, on an X window.
+            #[cfg(not(target_os = "linux"))]
             let _ = w.set_ignore_cursor_events(true);
+            let _ = w.show();
         }
         Err(e) => crate::applog(&format!("carry overlay: {e}")),
     }

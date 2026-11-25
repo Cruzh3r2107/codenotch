@@ -358,7 +358,9 @@ pub fn place_notch(app: &AppHandle) {
         // pushed the window past the right edge at 125 % / 150 % (the ring's right side was clipped).
         let (ww, wh) = w
             .outer_size()
+            .ok()
             .map(|s| (s.width as i32, s.height as i32))
+            .filter(|s| s.0 > 0 && s.1 > 0)
             .unwrap_or((target.width as i32, target.height as i32));
         let ratio = {
             let st = app.state::<AppState>();
@@ -551,12 +553,44 @@ pub fn reset_bar(app: &AppHandle) {
 pub(crate) static DRAGGING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(windows)]
-fn left_button_down() -> bool {
+fn left_button_down(_app: &AppHandle) -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
     unsafe { (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000) != 0 }
 }
-#[cfg(not(windows))]
-fn left_button_down() -> bool {
+/// The pointer as the X server has it, position and left button together, asked on the GTK thread,
+/// which is the only one GDK may be used from. One round trip for both: a carry asks every few
+/// milliseconds, and two trips each time showed as the notch lagging the hand.
+#[cfg(target_os = "linux")]
+pub(crate) fn pointer_now(app: &AppHandle) -> Option<(f64, f64, bool)> {
+    use gtk::gdk::prelude::*;
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    app.run_on_main_thread(move || {
+        let now = gtk::gdk::Display::default()
+            .and_then(|d| d.default_seat().and_then(|s| s.pointer()).map(|p| (d, p)))
+            .and_then(|(d, p)| {
+                let root = d.default_screen().root_window()?;
+                let (_, x, y, mask) = root.device_position_double(&p);
+                let k = root.scale_factor().max(1) as f64;
+                Some((x * k, y * k, mask.contains(gtk::gdk::ModifierType::BUTTON1_MASK)))
+            });
+        let _ = tx.send(now);
+    })
+    .ok()?;
+    // A main thread that does not answer in time ends the carry rather than hang it
+    rx.recv_timeout(std::time::Duration::from_millis(250)).ok().flatten()
+}
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn pointer_now(app: &AppHandle) -> Option<(f64, f64, bool)> {
+    let down = left_button_down(app);
+    app.cursor_position().ok().map(|c| (c.x, c.y, down))
+}
+/// A carry starts with the button pressed on the notch; see `pointer_now`.
+#[cfg(target_os = "linux")]
+fn left_button_down(app: &AppHandle) -> bool {
+    pointer_now(app).is_some_and(|(_, _, down)| down)
+}
+#[cfg(not(any(windows, target_os = "linux")))]
+fn left_button_down(_app: &AppHandle) -> bool {
     false
 }
 
@@ -2193,7 +2227,48 @@ fn adopt_system_proxy() {
     }
 }
 
+/// What `scripts/run-linux.sh` does, done by the binary itself so every way of starting it — the
+/// autostart entry, a launcher, a bare `./codenotch` — gets it. Without it, under Wayland GTK picks
+/// its Wayland backend, the compositor places the window wherever it likes (Mutter centres it), and
+/// the notch shows up in the middle of the screen. Runs first thing in `main`, while there is one
+/// thread, which is what makes touching the environment sound.
+#[cfg(target_os = "linux")]
+fn linux_session_env() {
+    use std::os::unix::process::CommandExt;
+    // A shell started from a snap (VS Code, for one) exports that snap's library paths, which break a
+    // binary built against the system glibc. Those are read by the loader before `main`, so the only
+    // remedy is to run again without them — once, marked so it can never loop.
+    const SNAP_VARS: [&str; 7] = [
+        "LD_LIBRARY_PATH",
+        "GTK_PATH",
+        "GIO_MODULE_DIR",
+        "GSETTINGS_SCHEMA_DIR",
+        "LOCPATH",
+        "GDK_PIXBUF_MODULE_FILE",
+        "GDK_PIXBUF_MODULEDIR",
+    ];
+    let from_snap = std::env::var("LD_LIBRARY_PATH").is_ok_and(|v| v.contains("/snap/"));
+    if from_snap && std::env::var_os("CODENOTCH_REEXEC").is_none() {
+        if let Ok(exe) = std::env::current_exe() {
+            let mut cmd = std::process::Command::new(exe);
+            cmd.args(std::env::args_os().skip(1)).env("CODENOTCH_REEXEC", "1");
+            for v in SNAP_VARS {
+                cmd.env_remove(v);
+            }
+            // Only returns on failure; then carry on as we are
+            let err = cmd.exec();
+            eprintln!("codenotch: re-exec without snap paths failed: {err}");
+        }
+    }
+    // The notch has to sit on a screen edge, and only an X11 client may place itself: XWayland it is.
+    if std::env::var_os("GDK_BACKEND").is_none() {
+        unsafe { std::env::set_var("GDK_BACKEND", "x11") };
+    }
+}
+
 fn main() {
+    #[cfg(target_os = "linux")]
+    linux_session_env();
     #[cfg(windows)]
     adopt_system_proxy();
     let args: Vec<String> = std::env::args().collect();

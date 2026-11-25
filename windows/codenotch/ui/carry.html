@@ -133,7 +133,10 @@ function cornerFor(p, length){
 /* ---- the spring (NotchWindowController.spring) ----------------------------------------------
    Following the hand it is brisk and all but dead; coming to rest on its own it is gentler, with a
    little give past where it stops and back. Two half steps keep a stiff spring steady at a slow frame. */
-const FOLLOW = { response: .2, damping: .84 }, SETTLE = { response: .3, damping: .74 };
+// Linux: the pointer already arrives a few ms late through XWayland, and the Mac's 0.2 s follow on
+// top of that read as the notch trailing the hand; there it follows close behind instead.
+const ON_LINUX = /Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent);
+const FOLLOW = ON_LINUX ? { response: .07, damping: .9 } : { response: .2, damping: .84 }, SETTLE = { response: .3, damping: .74 };
 function spring(gap, velocity, elapsed, { response, damping }){
   const omega = 2 * Math.PI / response;
   let moved = 0;

@@ -125,14 +125,62 @@ fn parent_pid() -> u32 {
     0
 }
 
+/// The Claude Code process. Claude Code runs a hook through a shell (`sh -c …`), so the hook's own
+/// parent is usually that shell, gone as soon as the hook is — useless for finding the terminal.
+/// Walk up past any shells to the first process that is not one.
 #[cfg(not(windows))]
 fn parent_pid() -> u32 {
-    std::os::unix::process::parent_id()
+    past_shells(std::os::unix::process::parent_id(), stat_of)
+}
+
+#[cfg(any(test, not(windows)))]
+fn past_shells(start: u32, stat: impl Fn(u32) -> Option<(String, u32)>) -> u32 {
+    const SHELLS: [&str; 6] = ["sh", "dash", "bash", "zsh", "fish", "busybox"];
+    let mut pid = start;
+    for _ in 0..4 {
+        let Some((name, ppid)) = stat(pid) else { break };
+        if !SHELLS.contains(&name.as_str()) || ppid <= 1 {
+            break;
+        }
+        pid = ppid;
+    }
+    pid
+}
+
+/// (`comm`, parent) from `/proc/<pid>/stat`; the fields after `comm` are found from its last `)`.
+#[cfg(not(windows))]
+fn stat_of(pid: u32) -> Option<(String, u32)> {
+    parse_stat(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+}
+
+#[cfg(any(test, not(windows)))]
+fn parse_stat(stat: &str) -> Option<(String, u32)> {
+    let name = stat.get(stat.find('(')? + 1..stat.rfind(')')?)?.to_string();
+    let mut rest = stat.get(stat.rfind(')')? + 1..)?.split_whitespace();
+    rest.next()?;
+    Some((name, rest.next()?.parse().ok()?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_hook_reports_claude_not_the_shell_that_ran_it() {
+        // hook ← sh 300 ← claude 200 ← bash 100 (the terminal's shell)
+        let tree = |pid: u32| match pid {
+            300 => Some(("sh".to_string(), 200)),
+            200 => Some(("claude".to_string(), 100)),
+            100 => Some(("bash".to_string(), 50)),
+            _ => None,
+        };
+        assert_eq!(past_shells(300, tree), 200);
+        // Run straight from claude, with no shell between
+        assert_eq!(past_shells(200, tree), 200);
+        // A process that is gone already stays as it is
+        assert_eq!(past_shells(999, tree), 999);
+        assert_eq!(parse_stat("42 (node (x)) S 7 1 1"), Some(("node (x)".into(), 7)));
+    }
 
     #[test]
     fn test_build_request_with_token() {

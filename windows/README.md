@@ -349,12 +349,24 @@ The data folder follows the XDG directories (`~/.config/codenotch`), and provide
 found at their Linux paths: `~/.claude`, `~/.codex`, `~/.grok`,
 `~/.config/Cursor/User/globalStorage/state.vscdb`.
 
-What does not work yet, and degrades quietly rather than misbehaving:
+The binary sets this up itself as well (it re-runs without a snap's library paths and selects
+the X11 backend), so the autostart entry and a bare `./target/release/codenotch` place the notch
+on its edge too. Its windows are override-redirect, out of the window manager's hands, so neither
+Mutter's `center-new-windows` nor a tiling extension such as Pop Shell can move them.
+
+Install the hooks from a stable place — `install-hooks` records the path of the `codenotch-hook`
+next to the running binary:
+
+```sh
+install -m755 target/release/codenotch target/release/codenotch-hook ~/.local/bin/
+~/.local/bin/codenotch install-hooks
+```
+
+What still does not work, and degrades quietly rather than misbehaving:
 
 | Feature | Why |
 |---|---|
-| Dragging the pill along its edge | Follows the mouse through `GetAsyncKeyState`; needs an X11 pointer query. |
-| Seen-clears-it, and jumping back to the terminal | `focus.rs` reads the foreground window and the process tree through Toolhelp; `/proc` plus a window-manager call would replace it. |
+| Seen-clears-it, and jumping back to the terminal | `focus.rs` reads the foreground window and the process tree through Toolhelp; under Wayland only the shell knows the focused window, so it needs a shell extension. |
 | Antigravity | Its credential is read from the Windows Credential Manager; libsecret is the equivalent. |
 | App icons taken from an installed `.exe` | The built-in provider SVGs cover every provider, so little is lost. |
 

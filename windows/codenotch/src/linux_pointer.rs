@@ -13,11 +13,39 @@ fn cancel_leave(pending: &PendingLeave) {
     }
 }
 
+/// Takes a window out of the window manager's hands, so it sits exactly where it is put. Mutter
+/// centres new windows (`center-new-windows`) and tiling extensions such as Pop Shell grab them, and
+/// either one moves the notch off its edge. Must happen before the window is first shown: an X
+/// server only reads override-redirect when a window is mapped.
+pub fn unmanage(window: &WebviewWindow) -> tauri::Result<()> {
+    let gtk_window = window.gtk_window()?;
+    if let Some(gdk_window) = gtk_window.window() {
+        gdk_window.set_override_redirect(true);
+    }
+    gtk_window.connect_realize(|window| {
+        if let Some(gdk_window) = window.window() {
+            gdk_window.set_override_redirect(true);
+        }
+    });
+    Ok(())
+}
+
 /// Install once, with the GTK window's lifecycle, on the main thread.
 pub fn install(window: &WebviewWindow) -> tauri::Result<()> {
     let gtk_window = window.gtk_window()?;
     let pending: PendingLeave = Rc::new(RefCell::new(None));
     gtk_window.add_events(gtk::gdk::EventMask::ENTER_NOTIFY_MASK | gtk::gdk::EventMask::LEAVE_NOTIFY_MASK);
+    unmanage(window)?;
+
+    let map_app = window.app_handle().clone();
+    gtk_window.connect_map(move |_| {
+        let app = map_app.clone();
+        glib::idle_add_local_once(move || {
+            if !crate::DRAGGING.load(std::sync::atomic::Ordering::SeqCst) {
+                crate::place_notch(&app);
+            }
+        });
+    });
 
     let leave_window = window.clone();
     let leave_pending = pending.clone();
