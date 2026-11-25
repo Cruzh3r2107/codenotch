@@ -640,6 +640,7 @@ let opencodeSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let commandcodeSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let qoderSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let mistralSnap={status:'absent',windows:[],fetched_at:0,note:''};
+let openrouterSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let agSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let glyphs={}; // id → {kind:'mark'|'appicon', url}
 let activity=[]; // working state of the non-Claude providers: {provider,state:'busy'|'waiting',name,detail,since}
@@ -1550,6 +1551,8 @@ function providers(){
   if(agSnap.status!=='absent') list.push({id:'gemini',base:'gemini',name:'Antigravity',glyph:'Ag',snap:agSnap});
   if(qoderSnap.status!=='absent') list.push({id:'qoder',base:'qoder',name:'Qoder',glyph:'Q',snap:qoderSnap});
   if(mistralSnap.status!=='absent'&&headlineOf(mistralSnap,'mistral')) list.push({id:'mistral',base:'mistral',name:'Mistral',glyph:'M',snap:mistralSnap});
+  // Only with a spending limit or budget to fill a ring against (openrouter.rs)
+  if(openrouterSnap.status!=='absent'&&headlineOf(openrouterSnap,'openrouter')) list.push({id:'openrouter',base:'openrouter',name:'OpenRouter',glyph:'OR',snap:openrouterSnap});
   if(Array.isArray(notchSlots)&&notchSlots.length){
     const picked=list.filter(p=>!!slotFor(p.base));
     // Never leave the notch with nothing in it: an empty result means the choice no longer matches
@@ -1588,6 +1591,7 @@ function headlineOf(snap,id){
   if(id==='commandcode') return byId('monthly');
   if(id==='qoder') return byId('quota');
   if(id==='mistral') return ws[0];
+  if(id==='openrouter') return ws[0]; // tightest limit first
   const isArgon=w=>(w.id&&w.id.toLowerCase().includes('argon'))||(w.label&&w.label.toLowerCase().includes('argon'));
   const isClaude5h=w=>!isArgon(w)&&((w.id&&(w.id.toLowerCase().includes('claude')||w.id.toLowerCase().includes('gpt')||w.id.toLowerCase().includes('3p')))||(w.group&&w.group.toLowerCase().includes('claude')))&&laneIs(w,'5h');
   const isGemini5h=w=>((w.id&&w.id.toLowerCase().includes('gemini'))||(w.group&&w.group.toLowerCase().includes('gemini')))&&laneIs(w,'5h');
@@ -1638,6 +1642,7 @@ function weeklyOf(snap,id){
   if(id==='commandcode') return byId('weekly');
   if(id==='qoder') return null; // one plan window renewing at expiresAt; nothing weekly
   if(id==='mistral') return null; // monthly currency budgets only; nothing weekly
+  if(id==='openrouter') return null; // spend limits, not a weekly lane
   const fam=ws.filter(w=>laneFamily(w)===agPrefs.model), lanes=fam.length?fam:ws;
   return tightestOf(lanes.filter(w=>laneIs(w,'weekly')));
 }
@@ -2673,6 +2678,8 @@ listen('qoder',e=>{qoderSnap=e.payload||qoderSnap;settle('qoder');renderRing();i
 invoke('get_qoder').then(u=>{qoderSnap=u||qoderSnap;renderRing();}).catch(()=>{});
 listen('mistral',e=>{mistralSnap=e.payload||mistralSnap;settle('mistral');renderRing();if(card.classList.contains('show'))renderCard();}).catch(()=>{});
 invoke('get_mistral').then(u=>{mistralSnap=u||mistralSnap;renderRing();}).catch(()=>{});
+listen('openrouter',e=>{openrouterSnap=e.payload||openrouterSnap;settle('openrouter');renderRing();if(card.classList.contains('show'))renderCard();}).catch(()=>{});
+invoke('get_openrouter').then(u=>{openrouterSnap=u||openrouterSnap;renderRing();}).catch(()=>{});
 invoke('get_notch_slots').then(v=>{if(Array.isArray(v)){notchSlots=v;renderRing();}}).catch(()=>{});
 listen('notch_slots',e=>{
   notchSlots=Array.isArray(e.payload)?e.payload:null;

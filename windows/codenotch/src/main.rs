@@ -35,6 +35,7 @@ mod opencode;
 mod commandcode;
 mod qoder;
 mod mistral;
+mod openrouter;
 mod agy_cli;
 mod glyphs;
 mod trayicon;
@@ -89,6 +90,8 @@ pub struct AppState {
     pub qoder: Mutex<usage::UsageSnapshot>,
     /// Mistral AI / Mistral Vibe monthly budget snapshot.
     pub mistral: Mutex<usage::UsageSnapshot>,
+    /// OpenRouter key: spending limit and organisation budgets.
+    pub openrouter: Mutex<usage::UsageSnapshot>,
     /// Provider glyph cache, collected at launch and again on a tray refresh
     pub glyphs: Mutex<std::collections::HashMap<String, glyphs::Glyph>>,
     /// Working state of the non-Claude providers (Cursor reports it; Codex and Antigravity are inferred from recent writes)
@@ -655,6 +658,7 @@ pub(crate) fn refresh_provider(_app: &AppHandle, provider: &str) -> bool {
         "commandcode" => commandcode::request_refresh(),
         "qoder" => qoder::request_refresh(),
         "mistral" => mistral::request_refresh(),
+        "openrouter" => openrouter::request_refresh(),
         _ => return false,
     }
     true
@@ -707,6 +711,11 @@ fn get_qoder(state: tauri::State<AppState>) -> usage::UsageSnapshot {
 #[tauri::command]
 fn get_mistral(state: tauri::State<AppState>) -> usage::UsageSnapshot {
     state.mistral.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn get_openrouter(state: tauri::State<AppState>) -> usage::UsageSnapshot {
+    state.openrouter.lock().unwrap().clone()
 }
 
 #[tauri::command]
@@ -780,6 +789,7 @@ pub(crate) fn provider_page(provider: &str) -> Option<(&'static str, &'static st
         // The account page the SDK README documents (usage/plan and token minting live here)
         "qoder" => ("https://qoder.com/account/integrations", "qoder.com"),
         "mistral" => ("https://console.mistral.ai/billing", "console.mistral.ai"),
+        "openrouter" => ("https://openrouter.ai/activity", "openrouter.ai"),
         _ => return None,
     })
 }
@@ -1354,6 +1364,8 @@ fn ring_window<'a>(
         "qoder" => by_id("quota"),
         // Sorted descending by usage percentage in mistral::parse_budgets so windows[0] leads.
         "mistral" => windows.first(),
+        // Tightest limit first, sorted in openrouter::parse_windows
+        "openrouter" => windows.first(),
         _ => antigravity_lane(windows, antigravity_limit, antigravity_model),
     }
 }
@@ -1416,6 +1428,7 @@ pub(crate) fn snapshot_of(app: &AppHandle, id: &str) -> usage::UsageSnapshot {
         "commandcode" => st.commandcode.lock().unwrap().clone(),
         "qoder" => st.qoder.lock().unwrap().clone(),
         "mistral" => st.mistral.lock().unwrap().clone(),
+        "openrouter" => st.openrouter.lock().unwrap().clone(),
         _ => st.usage.lock().unwrap().clone(),
     }
 }
@@ -2074,12 +2087,13 @@ pub fn provider_label(id: &str) -> &'static str {
         "deepseek" => "DeepSeek Harness",
         "qoder" => "Qoder",
         "mistral" => "Mistral",
+        "openrouter" => "OpenRouter",
         _ => "Claude",
     }
 }
 
 /// Every provider the tray menu can offer, in the order the notch shows them.
-pub const TRAY_PROVIDER_IDS: [&str; 12] = ["claude", "codex", "glm", "opencode", "commandcode", "cursor", "grok", "copilot", "gemini", "deepseek", "qoder", "mistral"];
+pub const TRAY_PROVIDER_IDS: [&str; 13] = ["claude", "codex", "glm", "opencode", "commandcode", "cursor", "grok", "copilot", "gemini", "deepseek", "qoder", "mistral", "openrouter"];
 
 /// Keeps the tray menu current. macOS rebuilds its menu as it opens; Tauri has no such hook, so it
 /// is rebuilt whenever a reading changes, and once a minute besides — otherwise "Resets in 12 min"
@@ -2341,6 +2355,7 @@ fn main() {
             commandcode: Mutex::new(commandcode::load_persisted()),
             qoder: Mutex::new(qoder::load_persisted()),
             mistral: Mutex::new(mistral::load_persisted()),
+            openrouter: Mutex::new(openrouter::load_persisted()),
             glyphs: Mutex::new(Default::default()),
             activity: Mutex::new(Vec::new()),
         })
@@ -2384,6 +2399,7 @@ fn main() {
             get_commandcode,
             get_qoder,
             get_mistral,
+            get_openrouter,
             get_glyphs,
             get_activity,
             open_data_dir,
@@ -2497,6 +2513,7 @@ fn main() {
             commandcode::start(handle.clone());
             qoder::start(handle.clone());
             mistral::start(handle.clone());
+            openrouter::start(handle.clone());
             activity::start(handle.clone());
             reset_watch::start(handle.clone());
             // Collecting glyphs may read icon resources out of a few executables; do it off the main thread and push when done

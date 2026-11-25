@@ -113,7 +113,7 @@ fn weekly_window<'a>(provider: &str, windows: &'a [LimitWindow], model: &str) ->
         "claude" => by_id("seven_day").or_else(|| by_id("weekly_all")).or_else(|| by_id("weekly")),
         "codex" => by_id("secondary"),
         "glm" | "opencode" | "commandcode" => by_id("weekly"),
-        "cursor" | "grok" | "copilot" | "deepseek" | "qoder" | "mistral" => None,
+        "cursor" | "grok" | "copilot" | "deepseek" | "qoder" | "mistral" | "openrouter" => None,
         _ => {
             let family: Vec<_> = metered.iter().copied().filter(|w| crate::lane_family(w) == model).collect();
             let lanes = if family.is_empty() { metered } else { family };
