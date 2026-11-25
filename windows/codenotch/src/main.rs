@@ -36,6 +36,7 @@ mod commandcode;
 mod qoder;
 mod mistral;
 mod openrouter;
+pub(crate) mod llmtrack;
 mod agy_cli;
 mod glyphs;
 mod trayicon;
@@ -92,6 +93,8 @@ pub struct AppState {
     pub mistral: Mutex<usage::UsageSnapshot>,
     /// OpenRouter key: spending limit and organisation budgets.
     pub openrouter: Mutex<usage::UsageSnapshot>,
+    /// llmtrack: a link to its dashboard and its latest sessions, no quota.
+    pub llmtrack: Mutex<llmtrack::Snapshot>,
     /// Provider glyph cache, collected at launch and again on a tray refresh
     pub glyphs: Mutex<std::collections::HashMap<String, glyphs::Glyph>>,
     /// Working state of the non-Claude providers (Cursor reports it; Codex and Antigravity are inferred from recent writes)
@@ -659,6 +662,7 @@ pub(crate) fn refresh_provider(_app: &AppHandle, provider: &str) -> bool {
         "qoder" => qoder::request_refresh(),
         "mistral" => mistral::request_refresh(),
         "openrouter" => openrouter::request_refresh(),
+        "llmtrack" => llmtrack::request_refresh(),
         _ => return false,
     }
     true
@@ -790,6 +794,8 @@ pub(crate) fn provider_page(provider: &str) -> Option<(&'static str, &'static st
         "qoder" => ("https://qoder.com/account/integrations", "qoder.com"),
         "mistral" => ("https://console.mistral.ai/billing", "console.mistral.ai"),
         "openrouter" => ("https://openrouter.ai/activity", "openrouter.ai"),
+        // The default address; the right-click menu opens the discovered one (llmtrack::open_llmtrack)
+        "llmtrack" => ("http://127.0.0.1:8377/", "llmtrack dashboard"),
         _ => return None,
     })
 }
@@ -1429,6 +1435,7 @@ pub(crate) fn snapshot_of(app: &AppHandle, id: &str) -> usage::UsageSnapshot {
         "qoder" => st.qoder.lock().unwrap().clone(),
         "mistral" => st.mistral.lock().unwrap().clone(),
         "openrouter" => st.openrouter.lock().unwrap().clone(),
+        "llmtrack" => llmtrack::as_usage(&st.llmtrack.lock().unwrap()),
         _ => st.usage.lock().unwrap().clone(),
     }
 }
@@ -2088,12 +2095,13 @@ pub fn provider_label(id: &str) -> &'static str {
         "qoder" => "Qoder",
         "mistral" => "Mistral",
         "openrouter" => "OpenRouter",
+        "llmtrack" => "llmtrack",
         _ => "Claude",
     }
 }
 
 /// Every provider the tray menu can offer, in the order the notch shows them.
-pub const TRAY_PROVIDER_IDS: [&str; 13] = ["claude", "codex", "glm", "opencode", "commandcode", "cursor", "grok", "copilot", "gemini", "deepseek", "qoder", "mistral", "openrouter"];
+pub const TRAY_PROVIDER_IDS: [&str; 14] = ["claude", "codex", "glm", "opencode", "commandcode", "cursor", "grok", "copilot", "gemini", "deepseek", "qoder", "mistral", "openrouter", "llmtrack"];
 
 /// Keeps the tray menu current. macOS rebuilds its menu as it opens; Tauri has no such hook, so it
 /// is rebuilt whenever a reading changes, and once a minute besides — otherwise "Resets in 12 min"
@@ -2356,6 +2364,7 @@ fn main() {
             qoder: Mutex::new(qoder::load_persisted()),
             mistral: Mutex::new(mistral::load_persisted()),
             openrouter: Mutex::new(openrouter::load_persisted()),
+            llmtrack: Mutex::new(Default::default()),
             glyphs: Mutex::new(Default::default()),
             activity: Mutex::new(Vec::new()),
         })
@@ -2400,6 +2409,8 @@ fn main() {
             get_qoder,
             get_mistral,
             get_openrouter,
+            llmtrack::get_llmtrack,
+            llmtrack::open_llmtrack,
             get_glyphs,
             get_activity,
             open_data_dir,
@@ -2514,6 +2525,7 @@ fn main() {
             qoder::start(handle.clone());
             mistral::start(handle.clone());
             openrouter::start(handle.clone());
+            llmtrack::start(handle.clone());
             activity::start(handle.clone());
             reset_watch::start(handle.clone());
             // Collecting glyphs may read icon resources out of a few executables; do it off the main thread and push when done

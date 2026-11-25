@@ -1429,8 +1429,8 @@ document.getElementById('close').addEventListener('click', () => {
 });
 
 /* ---- providers ---------------------------------------------------------- */
-const ORDER = ['claude', 'codex', 'glm', 'opencode', 'commandcode', 'cursor', 'grok', 'copilot', 'gemini', 'deepseek', 'qoder', 'mistral', 'openrouter'];
-const FALLBACK_LABEL = { claude:'Claude', codex:'Codex', glm:'z.ai', opencode:'OpenCode', commandcode:'Command Code', cursor:'Cursor', grok:'Grok', copilot:'GitHub Copilot', gemini:'Antigravity', deepseek:'DeepSeek Harness', qoder:'Qoder', mistral:'Mistral', openrouter:'OpenRouter' };
+const ORDER = ['claude', 'codex', 'glm', 'opencode', 'commandcode', 'cursor', 'grok', 'copilot', 'gemini', 'deepseek', 'qoder', 'mistral', 'openrouter', 'llmtrack'];
+const FALLBACK_LABEL = { claude:'Claude', codex:'Codex', glm:'z.ai', opencode:'OpenCode', commandcode:'Command Code', cursor:'Cursor', grok:'Grok', copilot:'GitHub Copilot', gemini:'Antigravity', deepseek:'DeepSeek Harness', qoder:'Qoder', mistral:'Mistral', openrouter:'OpenRouter', llmtrack:'llmtrack' };
 let options = [];      // [{id,label,status,used}] from get_tray_options
 let glyphs = {};       // id -> {kind:'svg'|'png'|'appicon', svg, url}
 function providerList(){
@@ -1440,6 +1440,12 @@ function statusText(p){
   if(p.id === 'mistral'){
     if(p.status === 'absent' || !p.status) return ui('No API key discovered — set MISTRAL_API_KEY, mistral.json, or ~/.vibe/.env', 'No API key discovered — set MISTRAL_API_KEY, mistral.json, or ~/.vibe/.env');
     if((p.status === 'needsAuth' || p.status === 'error') && p.note) return p.note;
+  }
+  if(p.id === 'llmtrack'){
+    if(p.status === 'absent' || !p.status) return ui('llmtrack is not installed', 'llmtrack is not installed');
+    return p.status === 'error'
+      ? ui('Dashboard not running — the notch starts it on click', 'Dashboard not running — the notch starts it on click')
+      : ui('Opens the llmtrack dashboard', 'Opens the llmtrack dashboard');
   }
   if(p.id === 'openrouter'){
     if(p.status === 'absent' || !p.status) return ui('No API key discovered — set OPENROUTER_API_KEY or add an OpenRouter key to OpenCode', 'No API key discovered — set OPENROUTER_API_KEY or add an OpenRouter key to OpenCode');

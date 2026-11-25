@@ -146,6 +146,14 @@
   .g-box{border:1px solid var(--card-line);border-radius:10px;padding:0 10px 8px;margin-top:6px}
   .c-note{font-size:12px;color:var(--ink-3);line-height:1.5;margin-top:6px}
   .c-sessions{margin-top:12px;border-top:1px solid var(--card-rule);padding-top:8px}
+  /* llmtrack's card is the list alone: nothing above it to rule off */
+  .c-sessions.bare{margin-top:0;border-top:0;padding-top:0}
+  .s-row.s-two{align-items:flex-start;padding:3px 0}
+  .s-text{display:flex;flex-direction:column;min-width:0}
+  .s-title,.s-meta{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* The heading's colour: white on the dark card, as "OpenRouter Usage" is */
+  .s-title{color:var(--ink)}
+  .s-meta{color:#808080;font-size:10px}
   .s-row{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-4);padding:2px 0}
   .s-dot{width:6px;height:6px;border-radius:3px;flex:0 0 auto}
   .s-more{font-size:11px;color:var(--ink-dim);padding:2px 0}
@@ -641,6 +649,8 @@ let commandcodeSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let qoderSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let mistralSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let openrouterSnap={status:'absent',windows:[],fetched_at:0,note:''};
+// llmtrack is a link with its latest sessions, not a quota (llmtrack.rs)
+let llmtrackSnap={status:'absent',url:'',sessions:[],fetched_at:0,note:''};
 let agSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let glyphs={}; // id → {kind:'mark'|'appicon', url}
 let activity=[]; // working state of the non-Claude providers: {provider,state:'busy'|'waiting',name,detail,since}
@@ -1553,6 +1563,7 @@ function providers(){
   if(mistralSnap.status!=='absent'&&headlineOf(mistralSnap,'mistral')) list.push({id:'mistral',base:'mistral',name:'Mistral',glyph:'M',snap:mistralSnap});
   // Only with a spending limit or budget to fill a ring against (openrouter.rs)
   if(openrouterSnap.status!=='absent'&&headlineOf(openrouterSnap,'openrouter')) list.push({id:'openrouter',base:'openrouter',name:'OpenRouter',glyph:'OR',snap:openrouterSnap});
+  if(llmtrackSnap.status&&llmtrackSnap.status!=='absent') list.push({id:'llmtrack',base:'llmtrack',name:'llmtrack',glyph:'LT',link:true,snap:{status:'none',windows:[],fetched_at:llmtrackSnap.fetched_at,note:llmtrackSnap.note}});
   if(Array.isArray(notchSlots)&&notchSlots.length){
     const picked=list.filter(p=>!!slotFor(p.base));
     // Never leave the notch with nothing in it: an empty result means the choice no longer matches
@@ -1740,7 +1751,8 @@ function renderRing(){
       else if(ws==='attention') activity.innerHTML=`<g class="arc-pulse"><circle cx="28" cy="28" r="19" fill="none" stroke="${WATCH}" stroke-width="2.5"/></g>`;
       else activity.innerHTML='';
     }
-    if(p.snap.status==='needsAuth'||p.snap.status==='none') pct.textContent='—';
+    if(p.link) pct.textContent='↗'; // opens on click; nothing to measure
+    else if(p.snap.status==='needsAuth'||p.snap.status==='none') pct.textContent='—';
     else if(h && h.count!=null) pct.textContent='~'+h.count;
     else if(h && h.amount!=null) pct.textContent=h.amount;
     else if(h) pct.textContent=(h.derived?'~':'')+(showRemaining?leftPctText(h.used):pctText(h.used))+'%';
@@ -1813,6 +1825,8 @@ function renderCard(){
   // Several Claude accounts share the provider's title, and the line under it says whose card it is
   let html=`<div class="c-head">${headIcon}<span class="c-title">${esc(ui().title(p.account?'Claude':p.name))}</span></div>`;
   if(p.account) html+=`<div class="c-sub c-account">${esc(p.account)}</div>`;
+  // llmtrack's card: its own heading, then the session list
+  if(p.link){ c.innerHTML=`<div class="c-head">${headIcon}<span class="c-title">LLM-Track</span></div>`+llmtrackCardHtml(); placeCard(); return; }
   if(staleOf(snap)&&snap.fetched_at) html+=`<div class="c-sub">${ui().updated(ago(snap.fetched_at))}</div>`;
   if(snap.status==='needsAuth'){
     const who={claude:'Sign in to Claude Code to see usage.',cursor:'Sign in to Cursor to see usage.',codex:'Sign in to Codex to see usage.',grok:'Run grok login to see usage.',copilot:'Run gh auth login to see usage.',opencode:'Run opencode auth login to see usage.',commandcode:'Sign in with the Command Code app to read your usage.',gemini:'Sign in to Antigravity to see usage.',qoder:'Sign in to qodercli to see usage.'}[p.base]||'';
@@ -1875,6 +1889,17 @@ function renderCard(){
   const signIn=c.querySelector('#claude-sign-in');
   if(signIn) signIn.onclick=e=>{e.stopPropagation();signInClaude();};
   placeCard();
+}
+// llmtrack's card: its newest sessions of any tool, as the other providers' session rows are drawn
+function llmtrackCardHtml(){
+  const s=llmtrackSnap;
+  if(!(s.sessions&&s.sessions.length)) return `<div class="c-note">${esc(textCopy(s.note||'Waiting for first reading…'))}</div>`;
+  let html=`<div class="c-sessions bare">`;
+  for(const r of s.sessions){
+    // Title on its own line, where it is room enough; the directory and tool under it, quieter
+    html+=`<div class="s-row s-two"><span class="s-text"><span class="s-title">${esc(r.title)}</span><span class="s-meta">${esc(r.dir||'~')} · ${esc(r.tool)}</span></span></div>`;
+  }
+  return html+`</div>`;
 }
 // The card follows the hovered cell: centred on it along the pill (kept inside the window), tail pointing at it.
 // On the upright edges that means matching its vertical centre; on the flat ones, its horizontal centre,
@@ -2176,7 +2201,9 @@ let carried=false;
 listen('carry_hold',()=>{ carried=true; document.documentElement.style.visibility='hidden'; }).catch(()=>{});
 document.addEventListener('mouseup',e=>{
   if(e.button!==0)return;
-  if(press&&!dragging&&press.id) refreshRing(press.id);
+  // llmtrack's cell is a link: a click opens its dashboard instead of re-reading
+  if(press&&!dragging&&press.id==='llmtrack') invoke('open_llmtrack').catch(err=>notice(String(err)));
+  else if(press&&!dragging&&press.id) refreshRing(press.id);
   press=null;
 });
 // The Mac's right-click menu, naming the ring or card under the pointer; WebView2's own menu never shows
@@ -2680,6 +2707,8 @@ listen('mistral',e=>{mistralSnap=e.payload||mistralSnap;settle('mistral');render
 invoke('get_mistral').then(u=>{mistralSnap=u||mistralSnap;renderRing();}).catch(()=>{});
 listen('openrouter',e=>{openrouterSnap=e.payload||openrouterSnap;settle('openrouter');renderRing();if(card.classList.contains('show'))renderCard();}).catch(()=>{});
 invoke('get_openrouter').then(u=>{openrouterSnap=u||openrouterSnap;renderRing();}).catch(()=>{});
+listen('llmtrack',e=>{llmtrackSnap=e.payload||llmtrackSnap;renderRing();if(card.classList.contains('show')&&hoverId==='llmtrack')renderCard();}).catch(()=>{});
+invoke('get_llmtrack').then(u=>{llmtrackSnap=u||llmtrackSnap;renderRing();}).catch(()=>{});
 invoke('get_notch_slots').then(v=>{if(Array.isArray(v)){notchSlots=v;renderRing();}}).catch(()=>{});
 listen('notch_slots',e=>{
   notchSlots=Array.isArray(e.payload)?e.payload:null;

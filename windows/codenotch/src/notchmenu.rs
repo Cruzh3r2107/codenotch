@@ -83,6 +83,16 @@ fn handle(app: &AppHandle, id: &str) {
         return;
     };
     if let Some(provider) = item.strip_prefix("open:") {
+        if provider == "llmtrack" {
+            // Off the menu's thread: it may have to start the dashboard and wait for it
+            let app = app.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = crate::llmtrack::open_llmtrack(app) {
+                    crate::applog(&format!("llmtrack: {e}"));
+                }
+            });
+            return;
+        }
         crate::open_provider_page(provider);
         return;
     }
